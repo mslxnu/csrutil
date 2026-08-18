@@ -226,8 +226,6 @@ int main(int argc, char *argv[])
 
             /* Set the --without allow-bits, clear everything else. */
             uint32_t to_clear = CSR_VALID_FLAGS & ~keep_flags;
-            printf("Enabling System Integrity Protection "
-                   "(excluding: 0x%04x).\n", keep_flags);
             int rc = csrutil_set_flags(keep_flags, to_clear, NULL, NULL);
             if (rc != CSRUTIL_OK) {
                 fprintf(stderr, "error: %s\n", csrutil_strerror(rc));

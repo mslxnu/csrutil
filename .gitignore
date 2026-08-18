@@ -2,3 +2,7 @@
 *.a
 *.tmp
 *.DS_Store
+*.profraw
+csrutil
+inject/*.dylib
+inject/*.so

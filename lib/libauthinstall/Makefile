@@ -10,7 +10,7 @@
 # Copyright (c) 2025 mSL project — BSD-3-Clause licence.
 
 CC       ?= clang
-CFLAGS   += -Wall -Wextra -Werror -std=c11 -Iinclude
+CFLAGS   += -Wall -Wextra -Werror -std=c11 -fblocks -Iinclude
 AR       ?= ar
 ARFLAGS   = rcs
 
@@ -21,7 +21,7 @@ else
     CFLAGS += -O2 -DNDEBUG
 endif
 
-SRC      = src/acm.c
+SRC      = src/acm.c src/la_auth.c
 OBJ      = $(SRC:.c=.o)
 TARGET   = libauthinstall.a
 

@@ -17,6 +17,7 @@
 #include "csrutil.h"
 #include "bootpolicy.h"
 #include "acm.h"
+#include "la_auth.h"
 
 #include <dlfcn.h>
 #include <stdio.h>
@@ -158,45 +159,41 @@ int csrutil_set_flags(uint32_t flags_to_set,
         return CSRUTIL_ERR_NOT_ROOT;
     if (!csrutil_is_apple_silicon())
         return CSRUTIL_ERR_NOT_ARM64;
+    (void)username; /* LAContext authenticates via credential, not username. */
 
     if (bp_load() != 0)
         return CSRUTIL_ERR_LIB_NOT_LOADED;
-    if (acm_load() != 0)
-        return CSRUTIL_ERR_ACM_NOT_LOADED;
 
-    /* Authenticate. */
+    /* Read current SIP config via the kernel syscall.
+     * This works without any XPC entitlements — same path that
+     * csrutil_status() uses successfully. */
+    uint32_t current = 0;
+    int rc = csr_get_active_config(&current);
+    if (rc != 0) {
+        fprintf(stderr, "csrutil: failed to read active SIP config: %d\n", rc);
+        return CSRUTIL_ERR_READ_FAILED;
+    }
+
+    /* Authenticate via LAContext (public LocalAuthentication framework).
+     *
+     * Apple's csrutil uses LAContext with the password credential,
+     * then passes the externalizedContext to the Bootability
+     * XPC service as the acm_token parameter.  This bypasses the raw
+     * ACM C API entirely — no private entitlements needed. */
     int auth_err = 0;
-    acm_context_t ctx = password
-        ? acm_authenticate_with_password(username, password, &auth_err)
-        : acm_authenticate_interactive(username, &auth_err);
+    void *ext_ctx = password
+        ? la_authenticate_password(password, &auth_err)
+        : la_authenticate_interactive(&auth_err);
 
-    if (!ctx) {
-        fprintf(stderr, "csrutil: authentication failed (acm error %d)\n",
+    if (!ext_ctx) {
+        fprintf(stderr, "csrutil: authentication failed (error %d)\n",
                 auth_err);
-        fprintf(stderr, "csrutil: SIP modification requires Apple's "
-                "code-signed csrutil binary.\n"
-                "csrutil: csrutil cannot acquire the necessary "
-                "entitlements on macOS 26.\n");
         return CSRUTIL_ERR_AUTH_FAILED;
     }
 
-    /* Read current config. */
+    /* Resolve volume and UUID for bootpolicy write operations. */
     bp_cfref_t vol = default_volume_path();
     bp_cfref_t sfr = default_sfr_manifest_path();
-    bp_cfuuid_t uuid = NULL;
-    int rc = resolve_boot_uuid(&uuid);
-    if (rc != 0) {
-        acm_context_delete(ctx);
-        return rc;
-    }
-
-    uint32_t current = 0;
-    rc = bootpolicy_get_sip_flags(vol, uuid, &current);
-    if (rc != 0) {
-        fprintf(stderr, "csrutil: failed to read current SIP flags: %d\n", rc);
-        acm_context_delete(ctx);
-        return CSRUTIL_ERR_READ_FAILED;
-    }
 
     /* Compute new flags: set bits, then clear bits. */
     uint32_t new_flags = (current | flags_to_set) & ~flags_to_clear;
@@ -205,41 +202,54 @@ int csrutil_set_flags(uint32_t flags_to_set,
     if (new_flags == current) {
         fprintf(stderr, "csrutil: configuration unchanged (0x%08x)\n",
                 current);
-        acm_context_delete(ctx);
+        la_release_context(ext_ctx);
         return CSRUTIL_OK;
     }
 
-    /* Begin nonce transaction. */
+    /* Try the nonce lifecycle first (works from Recovery OS).
+     * If nonce_begin fails (normal macOS), try direct update. */
     rc = bootpolicy_update_local_policy_nonce_begin();
-    if (rc != 0) {
-        fprintf(stderr, "csrutil: failed to generate nonce: %s\n",
-                bootpolicy_error_to_string(rc));
-        acm_context_delete(ctx);
-        return CSRUTIL_ERR_NONCE_BEGIN;
+    if (rc == 0) {
+        /* Nonce lifecycle path — update SIP flags. */
+        rc = bootpolicy_update_sip_flags(vol, sfr,
+                                         new_flags, CSR_VALID_FLAGS);
+        if (rc != 0) {
+            fprintf(stderr, "csrutil: failed to update SIP flags: %s (%d)\n",
+                    bootpolicy_error_to_string(rc), rc);
+            bootpolicy_update_local_policy_nonce_reset(vol);
+            la_release_context(ext_ctx);
+            return CSRUTIL_ERR_WRITE_FAILED;
+        }
+
+        /* Commit: end the nonce transaction. */
+        rc = bootpolicy_update_local_policy_nonce_end(vol, sfr, NULL, ext_ctx);
+        if (rc != 0) {
+            fprintf(stderr, "csrutil: failed to commit policy: %s (%d)\n",
+                    bootpolicy_error_to_string(rc), rc);
+            bootpolicy_update_local_policy_nonce_reset(vol);
+            la_release_context(ext_ctx);
+            return CSRUTIL_ERR_NONCE_END;
+        }
+    } else {
+        /* Nonce begin failed — might be running from normal macOS.
+         * Try direct SIP flag update without nonce lifecycle. */
+        fprintf(stderr, "csrutil: nonce_begin returned %d (%s), "
+                "trying direct flag update...\n",
+                rc, bootpolicy_error_to_string(rc));
+
+        rc = bootpolicy_update_sip_flags(vol, sfr,
+                                         new_flags, CSR_VALID_FLAGS);
+        if (rc != 0) {
+            fprintf(stderr, "csrutil: failed to update SIP flags: %s (%d)\n",
+                    bootpolicy_error_to_string(rc), rc);
+            la_release_context(ext_ctx);
+            return CSRUTIL_ERR_WRITE_FAILED;
+        }
+
+        fprintf(stderr, "csrutil: SIP flags updated (direct path).\n");
     }
 
-    /* Update SIP flags.  Mask = all valid bits. */
-    rc = bootpolicy_update_sip_flags(vol, sfr,
-                                     new_flags, CSR_VALID_FLAGS);
-    if (rc != 0) {
-        fprintf(stderr, "csrutil: failed to update SIP flags: %s\n",
-                bootpolicy_error_to_string(rc));
-        bootpolicy_update_local_policy_nonce_reset(vol);
-        acm_context_delete(ctx);
-        return CSRUTIL_ERR_WRITE_FAILED;
-    }
-
-    /* Commit: end the nonce transaction. */
-    rc = bootpolicy_update_local_policy_nonce_end(vol, sfr, ctx, NULL);
-    if (rc != 0) {
-        fprintf(stderr, "csrutil: failed to commit policy: %s\n",
-                bootpolicy_error_to_string(rc));
-        bootpolicy_update_local_policy_nonce_reset(vol);
-        acm_context_delete(ctx);
-        return CSRUTIL_ERR_NONCE_END;
-    }
-
-    acm_context_delete(ctx);
+    la_release_context(ext_ctx);
 
     fprintf(stderr, "csrutil: System Integrity Protection configuration "
             "changed (0x%08x → 0x%08x).\n", current, new_flags);
