@@ -24,7 +24,8 @@ enum {
     CSRUTIL_ERR_NOT_ROOT,
     CSRUTIL_ERR_NOT_ARM64,
     CSRUTIL_ERR_NO_POLICY,
-    CSRUTIL_ERR_LIB_NOT_LOADED,
+    CSRUTIL_ERR_LIB_NOT_LOADED,    /* libbootpolicy failed to load    */
+    CSRUTIL_ERR_ACM_NOT_LOADED,    /* ACM (auth subsystem) failed     */
     CSRUTIL_ERR_LIB_SYMBOL,
     CSRUTIL_ERR_AUTH_FAILED,
     CSRUTIL_ERR_NONCE_BEGIN,

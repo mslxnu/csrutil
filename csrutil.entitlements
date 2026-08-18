@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ACM (Apple Credential Manager) — required for ACMContextCreate -->
+    <key>com.apple.private.applecredentialmanager.allow</key>
+    <true/>
+
+    <!-- CoreAuthentication SPI — required for auth framework access -->
+    <key>com.apple.private.CoreAuthentication.SPI</key>
+    <true/>
+
+    <!-- Bootability — required for LocalPolicy read/write -->
+    <key>com.apple.private.bootability</key>
+    <true/>
+
+    <!-- Boot policy — required for SIP flag updates -->
+    <key>com.apple.private.security.bootpolicy</key>
+    <true/>
+
+    <!-- NVRAM — required for CSR variable access -->
+    <key>com.apple.private.iokit.nvram-csr</key>
+    <true/>
+    <key>com.apple.private.iokit.system-nvram-allow</key>
+    <true/>
+
+    <!-- Installer auth agent -->
+    <key>com.apple.private.IASInstallerAuthAgent</key>
+    <true/>
+
+    <!-- Preboot / Recovery volume access -->
+    <key>com.apple.rootless.volume.Preboot</key>
+    <true/>
+    <key>com.apple.rootless.volume.Recovery</key>
+    <true/>
+    <key>com.apple.rootless.volume.iSCPreboot</key>
+    <true/>
+    <key>com.apple.rootless.volume.iSCRecovery</key>
+    <true/>
+</dict>
+</plist>

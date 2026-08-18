@@ -85,6 +85,7 @@ const char *csrutil_strerror(int error)
     case CSRUTIL_ERR_NOT_ARM64:      return "not Apple Silicon (no LocalPolicy)";
     case CSRUTIL_ERR_NO_POLICY:      return "boot volume has no local policy";
     case CSRUTIL_ERR_LIB_NOT_LOADED: return "libbootpolicy.dylib not loaded";
+    case CSRUTIL_ERR_ACM_NOT_LOADED: return "ACM subsystem not loaded (LocalAuthenticationCore)";
     case CSRUTIL_ERR_LIB_SYMBOL:     return "missing symbol in libbootpolicy";
     case CSRUTIL_ERR_AUTH_FAILED:    return "authentication failed (wrong password?)";
     case CSRUTIL_ERR_NONCE_BEGIN:    return "nonce_begin() failed";
@@ -161,7 +162,7 @@ int csrutil_set_flags(uint32_t flags_to_set,
     if (bp_load() != 0)
         return CSRUTIL_ERR_LIB_NOT_LOADED;
     if (acm_load() != 0)
-        return CSRUTIL_ERR_LIB_NOT_LOADED;
+        return CSRUTIL_ERR_ACM_NOT_LOADED;
 
     /* Authenticate. */
     int auth_err = 0;
@@ -170,8 +171,12 @@ int csrutil_set_flags(uint32_t flags_to_set,
         : acm_authenticate_interactive(username, &auth_err);
 
     if (!ctx) {
-        fprintf(stderr, "csrutil: failed to authenticate: %s\n",
-                strerror(auth_err));
+        fprintf(stderr, "csrutil: authentication failed (acm error %d)\n",
+                auth_err);
+        fprintf(stderr, "csrutil: SIP modification requires Apple's "
+                "code-signed csrutil binary.\n"
+                "csrutil: csrutil cannot acquire the necessary "
+                "entitlements on macOS 26.\n");
         return CSRUTIL_ERR_AUTH_FAILED;
     }
 

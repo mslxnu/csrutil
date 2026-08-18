@@ -193,19 +193,103 @@ int main(int argc, char *argv[])
         break;
 
     case CMD_ENABLE: {
-        int rc = csrutil_enable(NULL, NULL);
-        if (rc != CSRUTIL_OK) {
-            fprintf(stderr, "error: %s\n", csrutil_strerror(rc));
-            return 1;
+        if (args_start < argc) {
+            /* enable --without <flag> --without <flag> ...
+             *
+             * Collect all --without flags into a bitmask, then enable
+             * SIP with those specific allow-bits preserved. */
+            uint32_t keep_flags = 0;
+            for (int i = args_start; i < argc; i++) {
+                bool is_without = (strcmp(argv[i], "--without") == 0);
+                bool is_with    = (strcmp(argv[i], "--with") == 0);
+                if (is_without || is_with) {
+                    if (++i >= argc) {
+                        fprintf(stderr, "error: %s requires an argument\n",
+                                argv[i - 1]);
+                        return 1;
+                    }
+                    int flag = parse_flag(argv[i]);
+                    if (flag < 0) {
+                        fprintf(stderr, "error: unknown flag '%s'\n",
+                                argv[i]);
+                        return 1;
+                    }
+                    if (is_without)
+                        keep_flags |= (uint32_t)flag;
+                    /* --with on enable is a no-op (bit already cleared) */
+                } else {
+                    fprintf(stderr, "error: unexpected argument '%s'\n",
+                            argv[i]);
+                    return 1;
+                }
+            }
+
+            /* Set the --without allow-bits, clear everything else. */
+            uint32_t to_clear = CSR_VALID_FLAGS & ~keep_flags;
+            printf("Enabling System Integrity Protection "
+                   "(excluding: 0x%04x).\n", keep_flags);
+            int rc = csrutil_set_flags(keep_flags, to_clear, NULL, NULL);
+            if (rc != CSRUTIL_OK) {
+                fprintf(stderr, "error: %s\n", csrutil_strerror(rc));
+                return 1;
+            }
+        } else {
+            int rc = csrutil_enable(NULL, NULL);
+            if (rc != CSRUTIL_OK) {
+                fprintf(stderr, "error: %s\n", csrutil_strerror(rc));
+                return 1;
+            }
         }
         break;
     }
 
     case CMD_DISABLE: {
-        int rc = csrutil_disable(NULL, NULL);
-        if (rc != CSRUTIL_OK) {
-            fprintf(stderr, "error: %s\n", csrutil_strerror(rc));
-            return 1;
+        if (args_start < argc) {
+            /* disable --without <flag> ...
+             *
+             * Disable SIP but keep specific restrictions active.
+             * --without kext on disable means "don't allow untrusted
+             * kexts" (keep the kext signing restriction). */
+            uint32_t keep_restricted = 0;
+            for (int i = args_start; i < argc; i++) {
+                bool is_without = (strcmp(argv[i], "--without") == 0);
+                bool is_with    = (strcmp(argv[i], "--with") == 0);
+                if (is_without || is_with) {
+                    if (++i >= argc) {
+                        fprintf(stderr, "error: %s requires an argument\n",
+                                argv[i - 1]);
+                        return 1;
+                    }
+                    int flag = parse_flag(argv[i]);
+                    if (flag < 0) {
+                        fprintf(stderr, "error: unknown flag '%s'\n",
+                                argv[i]);
+                        return 1;
+                    }
+                    if (is_without)
+                        keep_restricted |= (uint32_t)flag;
+                } else {
+                    fprintf(stderr, "error: unexpected argument '%s'\n",
+                            argv[i]);
+                    return 1;
+                }
+            }
+
+            /* Set all allow-bits EXCEPT the ones we want to keep. */
+            uint32_t to_set = CSR_SIP_DISABLE_FLAGS & ~keep_restricted;
+            printf("Disabling System Integrity Protection "
+                   "(keeping restrictions: 0x%04x).\n", keep_restricted);
+            int rc = csrutil_set_flags(to_set, 0, NULL, NULL);
+            if (rc != CSRUTIL_OK) {
+                fprintf(stderr, "error: %s\n", csrutil_strerror(rc));
+                return 1;
+            }
+        } else {
+            int rc = csrutil_disable(NULL, NULL);
+            if (rc != CSRUTIL_OK) {
+                fprintf(stderr, "error: %s\n", csrutil_strerror(rc));
+                return 1;
+            }
         }
         break;
     }
